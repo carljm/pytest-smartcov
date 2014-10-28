@@ -1,0 +1,5 @@
+pytest_smartcov.egg-info/
+.tox/
+doc/_build/
+dist/
+.coverage
