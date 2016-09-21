@@ -84,6 +84,7 @@ class FilteredStream(object):
         self.stream = stream
         self._interesting = False
         self._buffered = []
+        self._last_line_was_printable = False
 
     def line_is_interesting(self, line):
         """Return True, False, or None.
@@ -100,10 +101,13 @@ class FilteredStream(object):
             return None
         if '100%' in line:
             return False
+        if line == '\n':
+            return None if self._last_line_was_printable else False
         return True
 
     def write(self, msg):
         is_interesting = self.line_is_interesting(msg)
+        self._last_line_was_printable = True
         if is_interesting:
             if not self._interesting:
                 for line in self._buffered:
@@ -115,3 +119,5 @@ class FilteredStream(object):
                 self._buffered.append(msg)
             else:
                 self.stream.write(msg)
+        else:
+            self._last_line_was_printable = False
