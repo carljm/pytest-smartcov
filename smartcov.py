@@ -1,10 +1,11 @@
 from importlib import import_module
+import os
 
 import coverage
 import pytest
 
 
-__version__ = '0.2'
+__version__ = '0.3'
 
 
 def pytest_addoption(parser):
@@ -13,6 +14,16 @@ def pytest_addoption(parser):
         action='store_false',
         dest='coverage',
         default=True,
+        help="Turn off coverage measurement.",
+    )
+    parser.addoption(
+        '--cov-fail-under',
+        action='store',
+        type="int",
+        dest='cov_fail_under',
+        metavar="MIN",
+        help="Fail if total coverage is less than MIN.",
+        default=None,
     )
 
 
@@ -23,7 +34,7 @@ def pytest_load_initial_conftests(early_config, parser, args):
     ns = parser.parse_known_args(args)
     cov_paths = paths_hook(ns.file_or_dir)
     if ns.coverage and cov_paths:
-        plugin = CoveragePlugin(cov_paths)
+        plugin = CoveragePlugin(cov_paths, ns.cov_fail_under)
         plugin.start()
         early_config.pluginmanager.register(plugin, '_coverage')
 
@@ -41,10 +52,11 @@ def _get_paths_hook(hook_import_path):
 
 
 class CoveragePlugin(object):
-    def __init__(self, cov_source):
+    def __init__(self, cov_source, cov_fail_under=None):
         self.cov_source = cov_source
         self.cov_config = '.coveragerc'
         self.cov_data_file = '.coverage'
+        self.cov_fail_under = cov_fail_under
 
         self.cov = None
 
@@ -70,12 +82,37 @@ class CoveragePlugin(object):
             self.cov.html_report(ignore_errors=True)
             stream.write(
                 "Coverage HTML written to %s dir\n" % self.cov.config.html_dir)
+        return pct
+
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtestloop(self, session):
+        yield
+        with open(os.devnull, 'w') as dn:
+            total = int(self.cov.report(file=dn))
+        if self.cov_fail_under and total < self.cov_fail_under:
+            session.testsfailed += 1
 
     def pytest_sessionfinish(self):
         self.stop()
 
     def pytest_terminal_summary(self, terminalreporter):
-        self.report(terminalreporter._tw)
+        pct = self.report(terminalreporter._tw)
+        if self.cov_fail_under:
+            if pct < self.cov_fail_under:
+                kwargs = {'red': True, 'bold': True}
+                msg = (
+                    "FAIL Required test coverage of %d%% not "
+                    "reached. Total coverage: %d%%\n"
+                    % (self.cov_fail_under, pct)
+                )
+            else:
+                kwargs = {'green': True}
+                msg = (
+                    "Required test coverage of %d%% "
+                    "reached. Total coverage: %d%%\n"
+                    % (self.cov_fail_under, pct)
+                )
+            terminalreporter.write(msg, **kwargs)
 
 
 class FilteredStream(object):
